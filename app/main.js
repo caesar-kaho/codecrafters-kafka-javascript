@@ -1,36 +1,51 @@
 import net from "net";
 import { toBufferFromInt8, toBufferFromInt16BE, toBufferFromInt32BE } from './bufferUtils.js';
 
-const NULL_TAG = Buffer.from([0, 0]);
+const NULL_TAG = Buffer.from([0]);
 const PORT = 9092;
 const HOST = "127.0.0.1";
-const API_VERSIONS_KEY = 18;
+const API_KEYS = {
+    FETCH: 1,
+    API_VERSIONS: 18
+};
 
 const parseRequestHeader = (data) => ({
-    length: data.readInt32BE(0),
     apiKey: data.readInt16BE(4),
     apiVersion: data.readInt16BE(6),
     correlationId: data.readInt32BE(8),
     clientId: data.slice(12, data.indexOf(0, 12)).toString(),
 });
 
+const encodeCompactArrayLength = (length) => {
+    return Buffer.from([(length + 1) & 0xFF]);
+};
+
 const handleApiVersionRequest = (request) => {
-    const { apiKey, apiVersion, correlationId } = request;
+    const { correlationId } = request;
     const header = toBufferFromInt32BE(correlationId);
-    const isValidApiVersion = 0 <= apiVersion && apiVersion <= 4;
+    const isValidApiVersion = 0 <= request.apiVersion && request.apiVersion <= 4;
     const errorCode = toBufferFromInt16BE(isValidApiVersion ? 0 : 35);
+    let apiKeysCount;
+    if (request.apiVersion >= 3) {
+        apiKeysCount = encodeCompactArrayLength(2); // Compact array encoding for 2 elements
+    }
+    else {
+        apiKeysCount = toBufferFromInt32BE(2); // Regular array encoding for 2 elements
+    }
     const api_keys = Buffer.concat([
-        toBufferFromInt8(2), // Number of API keys (hardcoded to 2 for this example)
-        toBufferFromInt16BE(apiKey),
+        apiKeysCount,
+        toBufferFromInt16BE(API_KEYS.FETCH),
+        toBufferFromInt16BE(0), // Min version
+        toBufferFromInt16BE(16), // Max version
+        NULL_TAG,
+        toBufferFromInt16BE(API_KEYS.API_VERSIONS),
         toBufferFromInt16BE(0), // Min version
         toBufferFromInt16BE(4), // Max version
-        toBufferFromInt16BE(API_VERSIONS_KEY), // ApiVersions key
-        toBufferFromInt16BE(0), // Min version for ApiVersions
-        toBufferFromInt16BE(4), // Max version for ApiVersions
-        NULL_TAG,
+        NULL_TAG
     ]);
     const throttle_time_ms = toBufferFromInt32BE(0);
     const body = Buffer.concat([errorCode, api_keys, throttle_time_ms, NULL_TAG]);
+    console.log("body", body);
     const response = Buffer.concat([header, body]);
     const responseSize = toBufferFromInt32BE(response.length);
     return Buffer.concat([responseSize, response]);
@@ -46,7 +61,7 @@ const handleClientConnection = (connection) => {
             }
             const header = parseRequestHeader(data);
             console.log("Parsed header:", header);
-            if (header.apiKey === API_VERSIONS_KEY) {
+            if (header.apiKey === API_KEYS.API_VERSIONS) {
                 console.log("Handling ApiVersions request");
                 const response = handleApiVersionRequest(header);
                 connection.write(response);
