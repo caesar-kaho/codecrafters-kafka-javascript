@@ -11,3 +11,5 @@ export const toBufferFromInt32BE = (value) => {
     buf.writeInt32BE(value);
     return buf;
 };
+
+export const NULL_TAG = Buffer.from([0]);
